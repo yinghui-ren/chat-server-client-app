@@ -1,0 +1,19 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Text.Json.Serialization;
+
+namespace Communication
+{
+    [Serializable]
+    public class Message
+    {
+        public string Type { get; set; }
+        public string SenderName { get; set; }
+        public string NewName {  get; set; }
+        public string PrivateName { get; set; }
+        public string Receiver {  get; set; }
+        public string Content { get; set; }
+        public DateTime DateTime { get; set; }
+    }
+}
