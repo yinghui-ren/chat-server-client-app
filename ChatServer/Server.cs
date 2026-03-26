@@ -115,11 +115,11 @@ namespace ChatServer
 
             foreach (User user in listUsers)
             {  
-                if (user.Username == msg.PrivateName)
+                if (user.Username == msg.ReceiverName)
                 {
                     msg.SenderName = senderNameByClient;
                     Net.sendMsg(user.TcpClient.GetStream(), msg);
-                    Log("[INFO]" + " private message from " + senderNameByClient + " to " + msg.PrivateName + " successfully send");
+                    Log("[INFO]" + " private message from " + senderNameByClient + " to " + msg.ReceiverName + " successfully send");
                     found = true;
                     break;
                 }

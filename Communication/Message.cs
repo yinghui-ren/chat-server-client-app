@@ -11,9 +11,7 @@ namespace Communication
         public string Type { get; set; }
         public string SenderName { get; set; }
         public string NewName {  get; set; }
-        public string PrivateName { get; set; }
-        public string Receiver {  get; set; }
+        public string ReceiverName {  get; set; }
         public string Content { get; set; }
-        public DateTime DateTime { get; set; }
     }
 }

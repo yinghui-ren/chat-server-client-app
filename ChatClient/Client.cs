@@ -210,7 +210,7 @@ namespace ChatClient
                 Message msgPri = new Message
                 {
                     Type = "private",
-                    PrivateName = targetUsername,
+                    ReceiverName = targetUsername,
                     Content = contentPri
                 };
                 Net.sendMsg(client.GetStream(), msgPri);
