@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Reflection.Metadata;
 using System.Text;
+using System.Linq;
 
 namespace ChatClient
 {
@@ -11,7 +12,9 @@ namespace ChatClient
     {
         private string serverIp;
         private int port;
-
+        private bool isLoggedIn = false;
+        private volatile bool privateReceiverNameFound = false;
+        private volatile bool isWaiting = true;
         public Client(string serverIp, int port)
         {
             this.serverIp = serverIp;
@@ -25,7 +28,6 @@ namespace ChatClient
             TcpClient client = user.TcpClient;//创建client对象就表示已经连接上服务器
             Console.WriteLine("Connection established");
 
-            string senderName = Login(client);//登录login
 
 
             //创建新线程去持续接收消息,一定要在登录之后创建接收消息的新线程
@@ -34,26 +36,43 @@ namespace ChatClient
             //注意新建线程这件事不要写进循环里面, 否则每次循环都会新创建一个线程, 创建很多线程最后崩溃
             //只有线程里面的方法结束,线程才会结束.比如这里线程里面的方法是一个无限循环, 那就永远不会结束
 
+            Console.WriteLine("----------------welcome to chat room----------------");
+            Console.WriteLine("/broadcast + message, don't have to enter /broadcast again when get into the mode");
+            Console.WriteLine("/private + targetUsername + message, don't have to enter /private again when get into the mode");
+            Console.WriteLine("/name to change username, /users to show all connedted users");
+            Console.WriteLine("/quit to quit ");
+            Console.WriteLine("----------------------------------------------------");
+
+
+
 
 
             while (true)
             {
-                Console.WriteLine("----------------welcome to chat room----------------");
-                Console.WriteLine("press /chat to chat");
-                Console.WriteLine("press /name to change username");
-                Console.WriteLine("press /users to list connected users");
-                Console.WriteLine("press /quit to leave the chat ");
+                Console.WriteLine("back to while menu again");
+                string input = Console.ReadLine();
+                string[] parts = input.Split(' ');
+                string command = parts[0];
 
-                Console.WriteLine("please enter the instruction");
-                string chooseInstruction = Console.ReadLine();
-
-                switch (chooseInstruction)
+                if (!isLoggedIn && command != "/login")
                 {
-                    case "/chat":
-                        Chat(client);
+                    Console.WriteLine("Please login first.");
+                    continue;
+                }
+
+                switch (command)
+                {
+                    case "/login":
+                        Login(client, parts);
+                        break;
+                    case "/broadcast":
+                        Broadcast(client, parts, input);
+                        break;
+                    case "/private":
+                        Private(client, parts, input);
                         break;
                     case "/name":
-                        ChangeUsername(client);
+                        ChangeUsername(client, parts);
                         break;
                     case "/users":
                         ShowConnectedUsers(client);
@@ -65,10 +84,10 @@ namespace ChatClient
 
 
             }
-            
 
-                
-                
+
+
+
         }
 
         public void ReceiveLoop(TcpClient client)
@@ -84,15 +103,48 @@ namespace ChatClient
                         Console.WriteLine("Disconnected from server.");
                         break;
                     }
-
-                    if (rcvMessage.Type == "broadcast")
+                    if (rcvMessage.Type == "login")
                     {
-                        Console.WriteLine("[" + rcvMessage.Type + "] " + rcvMessage.SenderName + ": " + rcvMessage.Content);
+                        if (rcvMessage.Content == "login_ok")
+                        {
+                            isLoggedIn = true;
+                            Console.WriteLine(rcvMessage.Content + " welcome Dear user " + rcvMessage.SenderName);
+                        }
+                        else if (rcvMessage.Content == "login_failed")
+                        {
+                            Console.WriteLine("this username already exist, please enter your username again");
+                        }
+                    }
+                    else if (rcvMessage.Type == "broadcast")
+                    {
+                        Console.WriteLine("[" + rcvMessage.Type + "]" + rcvMessage.SenderName + ": " + rcvMessage.Content);
                     }
                     else if (rcvMessage.Type == "private")
                     {
-                        Console.WriteLine("[" + rcvMessage.Type + "] " + rcvMessage.SenderName + ": " + rcvMessage.Content);
-                    }  
+
+                        if (rcvMessage.Content == "userOffline")
+                        {
+                            Console.WriteLine(privateReceiverNameFound + " 224");
+                            Console.WriteLine("User offline, message send failed, please enter another target username");
+                        }
+                        else if (rcvMessage.Content == "userNotFound")
+                        {
+                            isWaiting = false;
+                            Console.WriteLine(privateReceiverNameFound + " 223");
+                            Console.WriteLine("User not found, message send failed, please enter another target username");
+                        }
+                        else
+                        {
+                            isWaiting = false;
+                            privateReceiverNameFound = true;
+                            Console.WriteLine(isWaiting + " 222");
+                            if (rcvMessage.Content != "senderSide")
+                            {
+
+                                Console.WriteLine("[" + rcvMessage.Type + "] " + rcvMessage.SenderName + ": " + rcvMessage.Content);
+                            }
+                        }
+                    }
                     else if (rcvMessage.Type == "changeUsername")
                     {
                         Console.WriteLine("Username changed: " + rcvMessage.SenderName + " -> " + rcvMessage.NewName);
@@ -111,75 +163,53 @@ namespace ChatClient
                 //我的程序结束这个子线程, 全靠捕获错误, 所以上面判断null的if语句没用, 但是先暂时保留一下
             }
 
-        }
+        }//创建子线程持续接收消息
 
-        public string Login(TcpClient client)
+        public void Login(TcpClient client, string[] parts)
         {
             //login
-            while (true)
-            {
-                Console.WriteLine("please enter username to login");
-                string senderName = Console.ReadLine();//键盘录入用户名
-                Message msgSend = new Message
-                {
-                    Type = "login",
-                    SenderName = senderName
-                };
-                Net.sendMsg(client.GetStream(), msgSend);//1,send把登录的用户名发送给服务器端
 
-                Message msgRcv = Net.rcvMsg(client.GetStream());//4,receive接收服务器发送过来的登录成功的消息
-                if (msgRcv.Type == "login_ok")
-                {
-                    msgRcv.SenderName = senderName;
-                    Console.WriteLine(msgRcv.Content + " welcome Dear user " + msgRcv.SenderName);
-                    return senderName;
-                }
-                else
-                {
-                    Console.WriteLine(msgRcv.Content);
-                    Console.WriteLine("this username already exist, please enter your username again");
-                }
+            string senderName = parts[1];
+            Message msgSend = new Message
+            {
+                Type = "login",
+                SenderName = senderName
+            };
+            Net.sendMsg(client.GetStream(), msgSend);//1,send把登录的用户名发送给服务器端
+
+            /*Message msgRcv = Net.rcvMsg(client.GetStream());//4,receive接收服务器发送过来的登录成功的消息
+            if (msgRcv.Type == "login_ok")
+            {
+                msgRcv.SenderName = senderName;
+                Console.WriteLine(msgRcv.Content + " welcome Dear user " + msgRcv.SenderName);
+                
             }
+            else
+            {
+                Console.WriteLine(msgRcv.Content);
+                Console.WriteLine("this username already exist, please enter your username again");
+            }*/
+
         }
 
-        public void Chat(TcpClient client)
+        public void Broadcast(TcpClient client, string[] parts, string input)
         {
-            
-
-            while (true)
+            //第一次发送需要截掉command
+            Message msg = new Message
             {
-                Console.WriteLine("press /private to send private message");
-                Console.WriteLine("press /broadcast to broadcast");
-                Console.WriteLine("press exit to exit");
+                Type = "broadcast",
+                Content = input.Substring(parts[0].Length + 1)
+            };
+            Net.sendMsg(client.GetStream(), msg);
 
-                string choose = Console.ReadLine();
-
-                if (choose == "exit")
-                {
-                    break;
-                }
-
-                switch (choose)
-                {
-                    case "/broadcast"://broadcast
-                        Broadcast(client);
-                        break;
-                    case "/private":
-                        Private(client);
-                        break;    
-                }
-
-            }
-        }
-
-        public void Broadcast(TcpClient client)
-        {
-            Console.WriteLine("please enter broadcast message");
+            //之后就发送全句就可以
+            Console.WriteLine("you entered broadcast mode, press /exit to exit");
             while (true)
             {
                 string content = Console.ReadLine();
-                if (content == "exit")
+                if (content == "/exit")
                 {
+                    Console.WriteLine("broadcast mode out");
                     break;
                 }
                 Message msgBroadcast = new Message
@@ -191,50 +221,66 @@ namespace ChatClient
             }
         }
 
-        public void Private(TcpClient client)
+        public void Private(TcpClient client, string[] parts, string input)
         {
-            Console.WriteLine("please enter the username you want to talk to in private(press exit to exit)");
-            string targetUsername = Console.ReadLine();
-            if (targetUsername == "exit")
+
+            string targetUsername = parts[1];
+            //第一次发送的前两个数组元素需要截掉
+            Message msg = new Message
             {
-                return;
-            }
+                Type = "private",
+                ReceiverName = targetUsername,
+                Content = input.Substring(parts[0].Length + 1 + parts[1].Length + 1)
+            };
+            Net.sendMsg(client.GetStream(), msg);
+
             while (true)
             {
-                Console.WriteLine("please enter your private message(press exit to exit)");
-                string contentPri = Console.ReadLine();
-                if (contentPri == "exit")
+                if (isWaiting)
                 {
-                    break;
+                    Console.WriteLine(isWaiting + "ttt3333");
+                    Thread.Sleep(500);
+                    continue;
                 }
-                Message msgPri = new Message
+                else if (!privateReceiverNameFound)
                 {
-                    Type = "private",
-                    ReceiverName = targetUsername,
-                    Content = contentPri
-                };
-                Net.sendMsg(client.GetStream(), msgPri);
+                    Console.WriteLine(privateReceiverNameFound + "ttttt111");
+                    isWaiting = true;
+                    return;
+                }
+
+                Console.WriteLine("you entered private mode, press /exit to exit");
+
+                while (true)
+                {
+                    string contentPri = Console.ReadLine();
+                    if (contentPri == "/exit")
+                    {
+                        isWaiting = true;
+                        privateReceiverNameFound = false;
+                        Console.WriteLine("private mode out");
+                        return;
+                    }
+                    Message msgPri = new Message
+                    {
+                        Type = "private",
+                        ReceiverName = targetUsername,
+                        Content = contentPri
+                    };
+                    Net.sendMsg(client.GetStream(), msgPri);
+                }
             }
         }
 
-        public void ChangeUsername(TcpClient client)
+        public void ChangeUsername(TcpClient client, string[] parts)
         {
-            Console.WriteLine("please enter the new username");
-            while (true)
-            {
-                string newUsername = Console.ReadLine();
-                if (newUsername == "exit")
-                {
-                    break;
-                }
+            string newUsername = parts[1];
                 Message msgSend = new Message
                 {
                     Type = "changeUsername",
                     NewName = newUsername
                 };
                 Net.sendMsg(client.GetStream(), msgSend);//1,send把登录的用户名发送给服务器端
-            }
-            
         }
 
         public void ShowConnectedUsers(TcpClient client)
@@ -244,8 +290,7 @@ namespace ChatClient
                 Type = "showConnectedUsers",
             };
             Net.sendMsg(client.GetStream(), msgSend);
-            Console.WriteLine("Here are the connected users (press ant button to exit) :");
-            Console.ReadLine();
+            Console.WriteLine("Here are the connected users :");
 
         }
 
@@ -278,6 +323,6 @@ namespace ChatClient
 
 
 
-        
+
     }
 }
