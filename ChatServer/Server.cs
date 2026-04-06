@@ -11,6 +11,7 @@ namespace ChatServer
     public class Server
     {
         List<User> listUsers = new List<User>();//创建用户列表, 非变量
+        List<ChatRoom> listChatRooms = new List<ChatRoom>();
         private readonly object userLock = new object();
         private int port;
 
@@ -47,38 +48,150 @@ namespace ChatServer
 
         }
 
-        public void Login(Message msg, TcpClient client)
+        public void HandleMessage(Message msg, TcpClient client)
         {
-            Log("reading username...");
+            switch (msg.Type)
+            {
+                case "signup":
+                    SignUp(msg, client);
+                    break;
+                case "login":
+                    Login(msg, client);
+                    break;
+                case "logout":
+                    LogOut(msg, client);
+                    break;
+                case "broadcast"://触发委托, 广播消息, 判断是否为广播类型, 并触发委托, 广播消息
+                    Broadcast(msg);
+                    break;
+                case "private":
+                    Private(msg, client);
+                    break;
+                case "changeUsername":
+                    ChangeUsername(msg, client);
+                    break;
+                case "showConnectedUsers":
+                    ShowConnectedUsers(msg, client);
+                    break;
+                case "createroom":
+                    CreateRoom(msg, client);
+                    break;
+                case "join":
+                    JoinRoom(msg, client);
+                    break;
+                case "sendMessageInRoom":
+                    SendMessageInRoom(msg, client);
+                    break;
+                case "leaveroom":
+                    LeaveChatRoom(msg, client);
+                    break;
+                case "roomscheck":
+                    RoomsCheck(msg, client);
+                    break;
+                case "deleteroom":
+                    DeleteChatRoom(msg, client);
+                    break;
+                case "quit":
+                    Quit(msg, client);//触发委托
+                    return;//结束对接某个客户端的 服务器的DoOperation子线程
+            }
+        }
+
+        public void SignUp(Message msg, TcpClient client)
+        {
             lock (userLock)
             {
                 if (listUsers.Count == 0)//如果list为空,直接将用户添加进list
                 {
-                    Log("Login success: " + msg.SenderName);
-                    User user = new User(msg.SenderName, true, client);//创建一个user并把正确的用户名和client添加进去
+                    Log("[INFO] Sign up success: " + msg.SenderName);
+                    User user = new User(msg.SenderName, msg.Password, false, null);//创建一个user并把正确的用户名和client添加进去
                     listUsers.Add(user);//将user添加到list中
-                    msg.Content = "login_ok";
+                    msg.Content = "signUpOK";
                     Net.sendMsg(client.GetStream(), msg);//3,send给客户端回消息登录成功
                     return;
                 }
                 else//如果不为空, 则判断要添加的用户名是否存在, 已存在就重复,存储失败, 不存在就储存成功
                 {
-                    if (CheckExist(listUsers, msg.SenderName))
+                    if (CheckExistUser(listUsers, msg.SenderName) != null)
                     {
-                        Log("Login failed: " + msg.SenderName);
-                        msg.Content = "login_failed";
+                        Log("[WARN] Sign up failed: " + msg.SenderName);
+                        msg.Content = "signUpFailed";
                         Net.sendMsg(client.GetStream(), msg);
                         return;
                     }
                     else
                     {
-                        Log("Login success: " + msg.SenderName);
-                        User user = new User(msg.SenderName, true, client);//创建一个user并把正确的用户名和client添加进去
+                        Log("[INFO] Sign up success: " + msg.SenderName);
+                        User user = new User(msg.SenderName, msg.Password, false, null);//创建一个user并把正确的用户名和client添加进去
                         listUsers.Add(user);//将user添加到list中
-                        msg.Content = "login_ok";
+                        msg.Content = "signUpOK";
                         Net.sendMsg(client.GetStream(), msg);//3,send给客户端回消息登录成功
                         return;
                     }
+                }
+            }
+        }
+
+        public void Login(Message msg, TcpClient client)
+        {
+            Log("reading username...");
+            lock (userLock)
+            {
+                if (CheckExistUser(listUsers, msg.SenderName) != null)
+                {
+                    User user = CheckExistUser(listUsers, msg.SenderName);
+                    if (!user.IsOnline)
+                    {
+                        if (user.Password == msg.Password)
+                        {
+                            user.IsOnline = true;
+                            user.TcpClient = client;
+                            Log("Login success: " + msg.SenderName);
+                            //User user = new User(msg.SenderName, true, client);//创建一个user并把正确的用户名和client添加进去
+                            //User user = new User(msg.SenderName, msg.Password, true, client);
+                            //listUsers.Add(user);//将user添加到list中
+                            msg.Content = "login_ok";
+                            Net.sendMsg(client.GetStream(), msg);//3,send给客户端回消息登录成功
+                            return;
+                        }
+                        else
+                        {
+                            Log("Login failed(wrong password): " + msg.SenderName);
+                            msg.Content = "wrongPassword";
+                            Net.sendMsg(client.GetStream(), msg);
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        Log("User already online, do not log in again !");
+                        msg.Content = "alreadyOnline";
+                        Net.sendMsg(client.GetStream(), msg);
+                    }
+                }
+                else
+                {
+
+                    Log("Login failed: " + msg.SenderName);
+                    msg.Content = "login_failed";
+                    Net.sendMsg(client.GetStream(), msg);
+                    return;
+                }
+            }
+        }
+
+        public void LogOut(Message msg, TcpClient client)
+        {
+            foreach (User user in listUsers)
+            {
+                if(user.TcpClient == client)
+                {
+                    user.IsOnline = false;
+                    msg.SenderName = user.Username;
+                    Log("[INFO] User log out !");
+                    Net.sendMsg(client.GetStream(), msg);
+                    user.TcpClient = null;
+                    break;
                 }
             }
         }
@@ -208,6 +321,189 @@ namespace ChatServer
             return;
         }
 
+        public void CreateRoom(Message msg, TcpClient client)
+        {
+            List<User> listUsersOfEachRoom = new List<User>();
+            ChatRoom room = new ChatRoom();
+
+            lock (userLock)
+            {
+                if (listChatRooms.Count == 0)
+                {
+                    foreach (User user in listUsers)
+                    {
+                        if (user.TcpClient == client)
+                        {
+                            user.CurrentChatRoom = msg.ChatRoomName;
+                            //listUsersOfEachRoom.Add(user);
+                            break;
+                        }
+                    }
+                    room.RoomName = msg.ChatRoomName;
+                    room.ListUsers = listUsersOfEachRoom;
+                    listChatRooms.Add(room);
+                    msg.Content = "roomCreatedOK";
+                    Log("[INFO] Chat room created successfully !");
+
+                }
+                else
+                {
+                    if (CheckExistChatRoom(listChatRooms, msg.ChatRoomName) != null)
+                    {
+                        msg.Content = "roomCreatedFailed";
+                        Log("[WARN] Chat room name already exist");
+                    }
+                    else
+                    {
+                        //foreach (User user in listUsers)
+                        //{
+                        //    if (user.TcpClient == client)
+                        //    {
+                        //        listUsersOfEachRoom.Add(user);
+                        //        break;
+                        //    }
+                        //}
+                        room.RoomName = msg.ChatRoomName;
+                        room.ListUsers = listUsersOfEachRoom;
+                        listChatRooms.Add(room);
+                        msg.Content = "roomCreatedOK";
+                        Log("[INFO] Chat room created successfully !");
+                    }
+                }
+            }
+            Net.sendMsg(client.GetStream(), msg);
+        }
+
+        public void JoinRoom(Message msg, TcpClient client)
+        {
+            string username = null;
+            User user = null;
+            Console.WriteLine("test1");
+            lock (userLock)
+            {
+                foreach (User userTemp in listUsers)
+                {
+                    Console.WriteLine("test2");
+                    if (userTemp.TcpClient == client)
+                    {
+                        username = userTemp.Username;
+                        user = userTemp;
+                        break;
+                    }
+                }
+                Console.WriteLine("test3");
+                if (CheckExistChatRoom(listChatRooms, msg.ChatRoomName) != null)
+                {
+                    Console.WriteLine("test4");
+                    ChatRoom chatRoom = CheckExistChatRoom(listChatRooms, msg.ChatRoomName);
+                    Console.WriteLine("test224");
+                    if (CheckExistUser(chatRoom.ListUsers, username) != null)
+                    {
+                        Console.WriteLine("test5");
+                        msg.Content = "userAlreadyInRoom";
+                        Net.sendMsg(client.GetStream(), msg);
+                        Log("[WARN] This user is already in chat room, don't join again !");
+                    }
+                    else
+                    {
+                        Console.WriteLine("test6");
+                        chatRoom.ListUsers.Add(user);
+                        msg.Content = "joinOK";
+                        Net.sendMsg(client.GetStream(), msg);
+                        Log("[INFO] User joined room successfully !");
+
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("test7");
+                    msg.Content = "roomNotFound";
+                    Net.sendMsg(client.GetStream(), msg);
+                    Log("[WARN] Join failed, room not found !");
+                }
+            }
+        }
+
+        public void SendMessageInRoom(Message msg, TcpClient client)
+        {
+            string senderName = null;
+            lock (userLock)
+            {
+                ChatRoom room = CheckExistChatRoom(listChatRooms, msg.ChatRoomName);
+
+                foreach (User user in listUsers)
+                {
+                    if (user.TcpClient == client)
+                    {
+                        senderName = user.Username;
+                    }
+                }
+                foreach (User user in room.ListUsers)
+                {
+                    msg.SenderName = senderName;
+                    Net.sendMsg(user.TcpClient.GetStream(), msg);
+                    Log("[INFO] Message sent to all users in chat room : " + msg.ChatRoomName);
+                }
+            }
+        }
+
+        public void LeaveChatRoom(Message msg, TcpClient client)
+        {
+            lock (userLock)
+            {
+                ChatRoom chatRoom = CheckExistChatRoom(listChatRooms, msg.ChatRoomName);
+                User userToRemove = null;
+                foreach (User user in chatRoom.ListUsers)
+                {
+                    if (user.TcpClient == client)
+                    {
+                        userToRemove = user;
+                        break;
+                    }
+                }
+                chatRoom.ListUsers.Remove(userToRemove);
+                msg.Content = "leaveroomOK";
+                Net.sendMsg(client.GetStream(), msg);
+                Log("[INFO] User left room: " + chatRoom.RoomName);
+                foreach (User user in chatRoom.ListUsers)
+                {
+                    msg.Content = "notificationsToOtherClients";
+                    msg.SenderName = userToRemove.Username;
+                    Net.sendMsg(user.TcpClient.GetStream(), msg);
+                }
+            }
+        }
+
+        public void RoomsCheck(Message msg, TcpClient client)
+        {
+            lock (userLock)
+            {
+                foreach (ChatRoom chatRoom in listChatRooms)
+                {
+                    string content = chatRoom.RoomName;
+                    msg.Content = content;
+                    Net.sendMsg(client.GetStream(), msg);
+                }
+            }
+        }
+
+        public void DeleteChatRoom(Message msg, TcpClient client)
+        {
+            lock (userLock)
+            {
+                foreach (ChatRoom chatRoom in listChatRooms)
+                {
+                    if (chatRoom.RoomName == msg.ChatRoomName)
+                    {
+                        listChatRooms.Remove(chatRoom);
+                        Net.sendMsg(client.GetStream(), msg);
+                        break;
+                    }
+                }
+            }
+
+        }
+
         public void Quit(Message msg, TcpClient client)
         {
             lock (userLock)
@@ -240,41 +536,31 @@ namespace ChatServer
             Console.WriteLine("[" + DateTime.Now + "] " + message);
         }
 
-        public bool CheckExist(List<User> listUsers, string senderName)
+        public User CheckExistUser(List<User> listUsers, string senderName)
         {
             foreach (User user in listUsers)
             {
                 if (user.Username == senderName)
                 {
-                    return true;
+                    Console.WriteLine("TEST222");
+                    return user;
                 }
             }
-            return false;
+            Console.WriteLine("TEST223");
+            return null;
         }
 
-        public void HandleMessage(Message msg, TcpClient client)
+        public ChatRoom CheckExistChatRoom(List<ChatRoom> listChatRooms, string chatRoomName)
         {
-            switch (msg.Type)
+            foreach (ChatRoom chatRoom in listChatRooms)
             {
-                case "login":
-                    Login(msg, client);
-                    break;
-                case "broadcast"://触发委托, 广播消息, 判断是否为广播类型, 并触发委托, 广播消息
-                    Broadcast(msg);
-                    break;
-                case "private":
-                    Private(msg, client);
-                    break;
-                case "changeUsername":
-                    ChangeUsername(msg, client);
-                    break;
-                case "showConnectedUsers":
-                    ShowConnectedUsers(msg, client);
-                    break;
-                case "quit":
-                    Quit(msg, client);//触发委托
-                    return;//结束对接某个客户端的 服务器的DoOperation子线程
+                if (chatRoom.RoomName == chatRoomName)
+                {
+                    return chatRoom;
+                }
             }
+            return null;
         }
+
     }
 }

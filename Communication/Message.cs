@@ -12,6 +12,8 @@ namespace Communication
         public string SenderName { get; set; }
         public string NewName {  get; set; }
         public string ReceiverName {  get; set; }
+        public string ChatRoomName { get; set; }
         public string Content { get; set; }
+        public string Password { get; set; }    
     }
 }

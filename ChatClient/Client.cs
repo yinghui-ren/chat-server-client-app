@@ -15,6 +15,9 @@ namespace ChatClient
         private bool isLoggedIn = false;
         private volatile bool privateReceiverNameFound = false;
         private volatile bool isWaiting = true;
+        private volatile bool isInRoom = false;
+        private volatile bool waitReplyRoom = true;
+        private volatile string currentRoom = null;
         public Client(string serverIp, int port)
         {
             this.serverIp = serverIp;
@@ -24,9 +27,10 @@ namespace ChatClient
         public void Start()
         {
 
-            User user = new User("", true, new TcpClient(serverIp, port));
+            User user = new User(null, null, true, new TcpClient(serverIp, port));
             TcpClient client = user.TcpClient;//创建client对象就表示已经连接上服务器
-            Console.WriteLine("Connection established");
+            Console.WriteLine("[INFO] Connection established");
+            Console.WriteLine();
 
 
 
@@ -37,11 +41,7 @@ namespace ChatClient
             //只有线程里面的方法结束,线程才会结束.比如这里线程里面的方法是一个无限循环, 那就永远不会结束
 
             Console.WriteLine("----------------welcome to chat room----------------");
-            Console.WriteLine("/broadcast + message, don't have to enter /broadcast again when get into the mode");
-            Console.WriteLine("/private + targetUsername + message, don't have to enter /private again when get into the mode");
-            Console.WriteLine("/name to change username, /users to show all connedted users");
-            Console.WriteLine("/quit to quit ");
-            Console.WriteLine("----------------------------------------------------");
+            Console.WriteLine();
 
 
 
@@ -49,12 +49,12 @@ namespace ChatClient
 
             while (true)
             {
-                Console.WriteLine("back to while menu again");
+                Console.WriteLine("Back to main menu.");
                 string input = Console.ReadLine();
                 string[] parts = input.Split(' ');
                 string command = parts[0];
 
-                if (!isLoggedIn && command != "/login")
+                if (!isLoggedIn && command != "/signup" && command != "/login")
                 {
                     Console.WriteLine("Please login first.");
                     continue;
@@ -62,8 +62,14 @@ namespace ChatClient
 
                 switch (command)
                 {
+                    case "/signup":
+                        SignUp(client, parts);
+                        break;
                     case "/login":
                         Login(client, parts);
+                        break;
+                    case "/logout":
+                        LogOut(client, parts);
                         break;
                     case "/broadcast":
                         Broadcast(client, parts, input);
@@ -76,6 +82,18 @@ namespace ChatClient
                         break;
                     case "/users":
                         ShowConnectedUsers(client);
+                        break;
+                    case "/createroom":
+                        CreateRoom(client, parts);
+                        break;
+                    case "/join":
+                        JoinRoom(client, parts);
+                        break;
+                    case "/roomscheck":
+                        RoomsCheck(client);
+                        break;
+                    case "/deleteroom":
+                        DeleteChatRoom(client, parts);
                         break;
                     case "/quit":
                         Quit(client);
@@ -103,58 +121,119 @@ namespace ChatClient
                         Console.WriteLine("Disconnected from server.");
                         break;
                     }
-                    if (rcvMessage.Type == "login")
+                    switch (rcvMessage.Type)
                     {
-                        if (rcvMessage.Content == "login_ok")
-                        {
-                            isLoggedIn = true;
-                            Console.WriteLine(rcvMessage.Content + " welcome Dear user " + rcvMessage.SenderName);
-                        }
-                        else if (rcvMessage.Content == "login_failed")
-                        {
-                            Console.WriteLine("this username already exist, please enter your username again");
-                        }
-                    }
-                    else if (rcvMessage.Type == "broadcast")
-                    {
-                        Console.WriteLine("[" + rcvMessage.Type + "]" + rcvMessage.SenderName + ": " + rcvMessage.Content);
-                    }
-                    else if (rcvMessage.Type == "private")
-                    {
-
-                        if (rcvMessage.Content == "userOffline")
-                        {
-                            Console.WriteLine(privateReceiverNameFound + " 224");
-                            Console.WriteLine("User offline, message send failed, please enter another target username");
-                        }
-                        else if (rcvMessage.Content == "userNotFound")
-                        {
-                            isWaiting = false;
-                            Console.WriteLine(privateReceiverNameFound + " 223");
-                            Console.WriteLine("User not found, message send failed, please enter another target username");
-                        }
-                        else
-                        {
-                            isWaiting = false;
-                            privateReceiverNameFound = true;
-                            Console.WriteLine(isWaiting + " 222");
-                            if (rcvMessage.Content != "senderSide")
+                        case "signup":
+                            if(rcvMessage.Content == "signUpOK")
                             {
-
-                                Console.WriteLine("[" + rcvMessage.Type + "] " + rcvMessage.SenderName + ": " + rcvMessage.Content);
+                                Console.WriteLine("You successfully sign up !");
+                            }else if(rcvMessage.Content == "signUpFailed")
+                            {
+                                Console.WriteLine("This username already exist, please enter your username again");
                             }
-                        }
-                    }
-                    else if (rcvMessage.Type == "changeUsername")
-                    {
-                        Console.WriteLine("Username changed: " + rcvMessage.SenderName + " -> " + rcvMessage.NewName);
-                        Console.WriteLine("enter new username to change or press exit to exit");
-                    }
-                    else if (rcvMessage.Type == "showConnectedUsers")
-                    {
-                        Console.WriteLine("Name: " + rcvMessage.SenderName + "  Status: online");
-                    }
+                            break;
+                        case "login":
+                            if (rcvMessage.Content == "login_ok")
+                            {
+                                isLoggedIn = true;
+                                Console.WriteLine("Log in successful, Welcome Dear User " + rcvMessage.SenderName);
+                            }
+                            else if (rcvMessage.Content == "login_failed")
+                            {
+                                Console.WriteLine("This user does not exist, please sign up first.");
+                            }else if(rcvMessage.Content == "wrongPassword")
+                            {
+                                Console.WriteLine("Wrong password, login failed !");
+                            }else if(rcvMessage.Content == "alreadyOnline")
+                            {
+                                Console.WriteLine("User: [" + rcvMessage.SenderName + "] is already online, please do not sign in again.");
+                            }
+                            break;
+                        case "logout":
+                            isLoggedIn = false;
+                            Console.WriteLine("User: " + rcvMessage.SenderName + " log out !");
+                            break;
+                        case "broadcast":
+                            Console.WriteLine("[" + rcvMessage.Type + "]" + rcvMessage.SenderName + ": " + rcvMessage.Content);
+                            break;
+                        case "private":
+                            if (rcvMessage.Content == "userOffline")
+                            {
+                                Console.WriteLine("User offline, message send failed, please enter another target username");
+                            }
+                            else if (rcvMessage.Content == "userNotFound")
+                            {
+                                isWaiting = false;
+                                Console.WriteLine("User not found, message send failed, please enter another target username");
+                            }
+                            else
+                            {
+                                isWaiting = false;
+                                privateReceiverNameFound = true;
+                                if (rcvMessage.Content != "senderSide")
+                                {
 
+                                    Console.WriteLine("[" + rcvMessage.Type + "] " + rcvMessage.SenderName + ": " + rcvMessage.Content);
+                                }
+                            }
+                            break;
+                        case "changeUsername":
+                            Console.WriteLine("Username changed: " + rcvMessage.SenderName + " -> " + rcvMessage.NewName);
+                            Console.WriteLine("enter new username to change or press exit to exit");
+                            break;
+                        case "showConnectedUsers":
+                            Console.WriteLine("Name: " + rcvMessage.SenderName + "  Status: online");
+                            break;
+                        case "createroom":
+                            if (rcvMessage.Content == "roomCreatedOK")
+                            {
+                                Console.WriteLine("Chat room created successfully !");
+                            }
+                            else if (rcvMessage.Content == "roomCreatedFailed")
+                            {
+                                Console.WriteLine("Chat room created failed !");
+                            }
+                            break;
+                        case "join":
+                            if (rcvMessage.Content == "userAlreadyInRoom")
+                            {
+                                waitReplyRoom = false;
+                                isInRoom = true;
+                                currentRoom = rcvMessage.ChatRoomName;
+                                Console.WriteLine("This user is already in chat room, don't join again !");
+                            }
+                            else if (rcvMessage.Content == "roomNotFound")
+                            {
+                                waitReplyRoom = false;
+                                Console.WriteLine("Join failed, room not found !");
+                            }
+                            else if (rcvMessage.Content == "joinOK")
+                            {
+                                waitReplyRoom = false;
+                                isInRoom = true;
+                                currentRoom = rcvMessage.ChatRoomName;
+                                Console.WriteLine("You have successfully joined the room !");
+                            }
+                            break;
+                        case "sendMessageInRoom":
+                            Console.WriteLine("[Room:" + rcvMessage.ChatRoomName + "] " + rcvMessage.SenderName + ": " + rcvMessage.Content);
+                            break;
+                        case "leaveroom":
+                            if (rcvMessage.Content == "leaveroomOK")
+                            {
+                                Console.WriteLine("You have left the room.");
+                            }else if(rcvMessage.Content == "notificationsToOtherClients")
+                            {
+                                Console.WriteLine(rcvMessage.SenderName + " has left the room.");
+                            }
+                            break;
+                        case "roomscheck":
+                            Console.WriteLine("Room name: " + rcvMessage.Content);
+                            break;
+                        case "deleteroom":
+                            Console.WriteLine("Room : " + rcvMessage.ChatRoomName + " deleted !");
+                            break;
+                    }
                 }
             }
             catch (Exception) //有错误时执行这个
@@ -165,31 +244,40 @@ namespace ChatClient
 
         }//创建子线程持续接收消息
 
+        public void SignUp(TcpClient client, string[] parts)
+        {
+            string senderName = parts[1];
+            string password = parts[2];
+            Message msg = new Message { 
+            Type = "signup",
+            SenderName = senderName,
+            Password = password
+            };
+            Net.sendMsg(client.GetStream(), msg);
+        }
+
         public void Login(TcpClient client, string[] parts)
         {
             //login
 
             string senderName = parts[1];
+            string password = parts[2];
             Message msgSend = new Message
             {
                 Type = "login",
-                SenderName = senderName
+                SenderName = senderName,
+                Password = password
             };
             Net.sendMsg(client.GetStream(), msgSend);//1,send把登录的用户名发送给服务器端
+        }
 
-            /*Message msgRcv = Net.rcvMsg(client.GetStream());//4,receive接收服务器发送过来的登录成功的消息
-            if (msgRcv.Type == "login_ok")
+        public void LogOut(TcpClient client, string[] parts)
+        {
+            Message msgSend = new Message
             {
-                msgRcv.SenderName = senderName;
-                Console.WriteLine(msgRcv.Content + " welcome Dear user " + msgRcv.SenderName);
-                
-            }
-            else
-            {
-                Console.WriteLine(msgRcv.Content);
-                Console.WriteLine("this username already exist, please enter your username again");
-            }*/
-
+                Type = "logout"
+            };
+            Net.sendMsg(client.GetStream(), msgSend);
         }
 
         public void Broadcast(TcpClient client, string[] parts, string input)
@@ -225,6 +313,7 @@ namespace ChatClient
         {
 
             string targetUsername = parts[1];
+
             //第一次发送的前两个数组元素需要截掉
             Message msg = new Message
             {
@@ -238,13 +327,11 @@ namespace ChatClient
             {
                 if (isWaiting)
                 {
-                    Console.WriteLine(isWaiting + "ttt3333");
                     Thread.Sleep(500);
                     continue;
                 }
                 else if (!privateReceiverNameFound)
                 {
-                    Console.WriteLine(privateReceiverNameFound + "ttttt111");
                     isWaiting = true;
                     return;
                 }
@@ -275,12 +362,12 @@ namespace ChatClient
         public void ChangeUsername(TcpClient client, string[] parts)
         {
             string newUsername = parts[1];
-                Message msgSend = new Message
-                {
-                    Type = "changeUsername",
-                    NewName = newUsername
-                };
-                Net.sendMsg(client.GetStream(), msgSend);//1,send把登录的用户名发送给服务器端
+            Message msgSend = new Message
+            {
+                Type = "changeUsername",
+                NewName = newUsername
+            };
+            Net.sendMsg(client.GetStream(), msgSend);//1,send把登录的用户名发送给服务器端
         }
 
         public void ShowConnectedUsers(TcpClient client)
@@ -292,6 +379,107 @@ namespace ChatClient
             Net.sendMsg(client.GetStream(), msgSend);
             Console.WriteLine("Here are the connected users :");
 
+        }
+
+        public void CreateRoom(TcpClient client, string[] parts)
+        {
+            string chatRoomName = parts[1];
+            Console.WriteLine("test create room");
+            Message msg = new Message
+            {
+                Type = "createroom",
+                ChatRoomName = chatRoomName
+
+            };
+            Net.sendMsg(client.GetStream(), msg);
+        }
+
+        public void JoinRoom(TcpClient client, string[] parts)
+        {
+            string currentRoom = parts[1];
+            Message msg = new Message
+            {
+                Type = "join",
+                ChatRoomName = currentRoom
+            };
+            Net.sendMsg(client.GetStream(), msg);
+            Console.WriteLine("testtttt join room");
+
+            SendMessageInRoom(client, parts);
+        }
+
+        public void SendMessageInRoom(TcpClient client, string[] parts)
+        {
+            Console.WriteLine(waitReplyRoom);
+            Console.WriteLine(isInRoom);
+            while (true)
+            {
+                if (waitReplyRoom)
+                {
+                    Thread.Sleep(500);
+                    Console.WriteLine("TEST 227");
+                    continue;
+                }
+                else if (!isInRoom)
+                {
+                    waitReplyRoom = true;
+                    Console.WriteLine("TEST 226");
+                    return;
+                }
+                break;
+            }
+
+            Console.WriteLine("You've entered the chat room.");
+
+            while (true)
+            {
+                string content = Console.ReadLine();
+                if (content == "/exit")
+                {
+                    waitReplyRoom = true;
+                    isInRoom = false;
+                    LeaveChatRoom(client);
+                    return;
+                }
+                Message msg = new Message
+                {
+                    Type = "sendMessageInRoom",
+                    Content = content,
+                    ChatRoomName = currentRoom
+                };
+                Net.sendMsg(client.GetStream(), msg);
+            }
+        }
+
+        public void LeaveChatRoom(TcpClient client)
+        {
+            Message msg = new Message
+            {
+                Type = "leaveroom",
+                ChatRoomName= currentRoom
+            };
+            currentRoom = null;
+            Net.sendMsg(client.GetStream(), msg);
+        }
+
+        public void RoomsCheck(TcpClient client)
+        {
+            Message msg = new Message
+            {
+                Type = "roomscheck"
+            };
+            Net.sendMsg(client.GetStream(), msg);
+        }
+
+        public void DeleteChatRoom(TcpClient client, string[] parts)
+        {
+            string roomName = parts[1];
+            Message msg = new Message
+            {
+                Type = "deleteroom",
+                ChatRoomName = roomName
+            };
+            Net.sendMsg(client.GetStream(), msg);
         }
 
         public void Quit(TcpClient client)
