@@ -16,10 +16,10 @@ namespace ChatServer
         public MessageHandler messageHandler;
 
         private TcpClient client;
-        private List<User> listUsers;//把在server中创建的用户列表传进来
+        private List<User> listUsers;
         private object userLock;
 
-        //构造器
+        
         public Receiver(TcpClient client, List<User> listUsers, object userLock)
         {
             this.client = client;
@@ -36,16 +36,14 @@ namespace ChatServer
             {
                 while (true)
                 {
-                    Console.WriteLine("doing operation...");
-                    // read expression
-                    Message msg = Net.rcvMsg(client.GetStream()); //2,receive接收发送过来的 用户名登录
+                    Message msg = Net.rcvMsg(client.GetStream());
 
                     messageHandler?.Invoke(msg, client);
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Receiver error: " + ex.Message);
+                Console.WriteLine("[" + DateTime.Now + "] [WARN] Receiver error: " + ex.Message);
             }
 
         }
